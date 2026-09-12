@@ -26,15 +26,34 @@ Borrow the idea from pandoc and this [blackfriday PR](https://github.com/russros
 
 The implementation is heavily inspired by the Fenced Code Block and CodeSpan of goldmark
 
+Maintained fork
+--------------------
+
+This fork continues pluveto's `feat/intended-block` fixes. Import this module
+directly; no replacement of the upstream module is required.
+
+Supported delimiters are `$...$` for inline math and `$$...$$` for display
+math (on one line or across multiple lines). Display blocks work in lists and
+blockquotes, with LF or CRLF input, and may be adjacent without a blank line.
+Text after a closing display delimiter is parsed as Markdown. Escaped dollar
+signs do not close math. Fenced and inline code remain literal. An unclosed
+display block extends to the end of its container, like a fenced code block.
+TeX is escaped when written to HTML so `<`, `>` and `&` reach MathJax intact.
+
+The parser does not validate TeX or load the browser's MathJax runtime.
+
 Installation
 --------------------
 
 ```
-go get github.com/litao91/goldmark-mathjax
+go get github.com/pluveto/goldmark-mathjax-fix@codex/fix-math-parsing
 ```
 
 Usage
 --------------------
+
+The fixes currently live on `codex/fix-math-parsing`, based on
+`feat/intended-block`. Go records an immutable pseudo-version in `go.mod`.
 
 ```go
 package main
@@ -43,7 +62,7 @@ import (
 	"bytes"
 	"fmt"
 
-	mathjax "github.com/litao91/goldmark-mathjax"
+	mathjax "github.com/pluveto/goldmark-mathjax-fix"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer/html"

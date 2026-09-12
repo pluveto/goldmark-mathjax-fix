@@ -8,104 +8,102 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
-type mathJaxBlockParser struct {
-}
+type mathJaxBlockParser struct{}
 
 var defaultMathJaxBlockParser = &mathJaxBlockParser{}
 
-type mathBlockData struct {
-	indent   int
-	isInline bool
+func NewMathJaxBlockParser() parser.BlockParser { return defaultMathJaxBlockParser }
+
+// mathClosure finds an unescaped pair of dollars, not part of a longer run.
+func mathClosure(line []byte, start int) int {
+	for i := start; i+1 < len(line); i++ {
+		if line[i] != '$' || line[i+1] != '$' {
+			continue
+		}
+		if (i > 0 && line[i-1] == '$') || (i+2 < len(line) && line[i+2] == '$') {
+			continue
+		}
+		if !escapedDollar(line, i) {
+			return i
+		}
+	}
+	return -1
 }
 
-var mathBlockInfoKey = parser.NewContextKey()
-
-func NewMathJaxBlockParser() parser.BlockParser {
-	return defaultMathJaxBlockParser
+func escapedDollar(line []byte, offset int) bool {
+	backslashes := 0
+	for i := offset - 1; i >= 0 && line[i] == '\\'; i-- {
+		backslashes++
+	}
+	return backslashes%2 != 0
 }
 
 func (b *mathJaxBlockParser) Open(parent ast.Node, reader text.Reader, pc parser.Context) (ast.Node, parser.State) {
-	line, _ := reader.PeekLine()
+	line, segment := reader.PeekLine()
 	pos := pc.BlockOffset()
-	if pos == -1 {
+	if pos < 0 || pos+2 > len(line) || !bytes.HasPrefix(line[pos:], []byte("$$")) ||
+		(pos+2 < len(line) && line[pos+2] == '$') {
 		return nil, parser.NoChildren
 	}
-
-	// Check for multi-line math block
-	if len(line) >= pos+2 && line[pos] == '$' && line[pos+1] == '$' {
-		pc.Set(mathBlockInfoKey, &mathBlockData{indent: pos, isInline: false})
-		node := NewMathBlock()
-		return node, parser.NoChildren
+	node := NewMathBlock()
+	start := pos + 2
+	if close := mathClosure(line, start); close >= 0 {
+		node.Lines().Append(text.NewSegment(segment.Start-segment.Padding+start, segment.Start-segment.Padding+close))
+		node.closed = true
+		// Open can return only one block. Save trailing Markdown as source lines
+		// and insert a paragraph on Close, before Goldmark's inline parsing pass.
+		tail := close + 2
+		for tail < len(line) && (line[tail] == ' ' || line[tail] == '\t') {
+			tail++
+		}
+		if len(bytes.TrimSpace(line[tail:])) != 0 {
+			seg := text.NewSegment(segment.Start-segment.Padding+tail, segment.Stop)
+			for seg.Stop > seg.Start && (reader.Source()[seg.Stop-1] == '\r' || reader.Source()[seg.Stop-1] == '\n') {
+				seg.Stop--
+			}
+			node.tail = &seg
+		}
+	} else if len(bytes.TrimSpace(line[start:])) != 0 {
+		node.Lines().Append(text.NewSegment(segment.Start-segment.Padding+start, segment.Stop))
 	}
-
-	return nil, parser.NoChildren
+	return node, parser.NoChildren
 }
 
 func (b *mathJaxBlockParser) Continue(node ast.Node, reader text.Reader, pc parser.Context) parser.State {
+	block := node.(*MathBlock)
+	if block.closed {
+		return parser.Close
+	}
 	line, segment := reader.PeekLine()
-	dataInterface := pc.Get(mathBlockInfoKey)
-	if dataInterface == nil {
-		return parser.Close
-	}
-
-	_, ok := dataInterface.(*mathBlockData)
-	if !ok {
-		return parser.Close
-	}
-
-	// Check for closing $$
-	if bytes.HasPrefix(bytes.TrimSpace(line), []byte("$$")) {
-		if !bytes.Equal(bytes.TrimSpace(line), []byte("$$")) {
-			// If there's content after $$, we need to split it
-			parts := bytes.SplitN(bytes.TrimSpace(line), []byte("$$"), 2)
-			if len(parts) > 1 && len(parts[1]) > 0 {
-				// Add the content after $$ to a new paragraph
-				para := ast.NewParagraph()
-				para.AppendChild(para, ast.NewTextSegment(text.NewSegment(segment.Start+bytes.Index(line, parts[1]), segment.Stop)))
-				node.Parent().InsertAfter(node.Parent(), node, para)
-			}
+	if close := mathClosure(line, 0); close >= 0 {
+		if len(bytes.TrimSpace(line[:close])) != 0 {
+			prefix := segment
+			prefix.Stop = segment.Start - segment.Padding + close
+			block.Lines().Append(prefix)
 		}
-		reader.Advance(segment.Stop - segment.Start)
+		// Leave both the line ending and any trailing Markdown for Goldmark.
+		// Consuming the newline here skips into the next formula's opener.
+		reader.Advance(close + 2)
+		block.closed = true
 		return parser.Close
 	}
-
-	node.(*MathBlock).Lines().Append(segment)
+	// Reader segments already account for list/blockquote indentation and
+	// virtual tab padding. A second dedent can truncate actual TeX characters.
+	block.Lines().Append(segment)
 	return parser.Continue | parser.NoChildren
 }
 
 func (b *mathJaxBlockParser) Close(node ast.Node, reader text.Reader, pc parser.Context) {
-	mathBlock, ok := node.(*MathBlock)
-	if !ok {
-		return
+	block := node.(*MathBlock)
+	if block.tail != nil {
+		paragraph := ast.NewParagraph()
+		paragraph.Lines().Append(*block.tail)
+		parent := block.Parent()
+		parent.InsertAfter(parent, block, paragraph)
+		block.tail = nil
 	}
-
-	// Remove leading and trailing $$ from the content
-	if mathBlock.Lines().Len() > 0 {
-		firstLine := mathBlock.Lines().At(0)
-		lastLine := mathBlock.Lines().At(mathBlock.Lines().Len() - 1)
-
-		firstLineContent := reader.Value(firstLine)
-		lastLineContent := reader.Value(lastLine)
-
-		if bytes.HasPrefix(firstLineContent, []byte("$$")) {
-			mathBlock.Lines().Set(0, text.NewSegment(firstLine.Start+2, firstLine.Stop))
-		}
-		if bytes.HasSuffix(lastLineContent, []byte("$$")) {
-			mathBlock.Lines().Set(mathBlock.Lines().Len()-1, text.NewSegment(lastLine.Start, lastLine.Stop-2))
-		}
-	}
-
-	pc.Set(mathBlockInfoKey, nil)
 }
 
-func (b *mathJaxBlockParser) CanInterruptParagraph() bool {
-	return true
-}
-
-func (b *mathJaxBlockParser) CanAcceptIndentedLine() bool {
-	return true
-}
-
-func (b *mathJaxBlockParser) Trigger() []byte {
-	return []byte{'$'}
-}
+func (b *mathJaxBlockParser) CanInterruptParagraph() bool { return true }
+func (b *mathJaxBlockParser) CanAcceptIndentedLine() bool { return true }
+func (b *mathJaxBlockParser) Trigger() []byte             { return []byte{'$'} }

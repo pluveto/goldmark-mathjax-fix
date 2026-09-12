@@ -23,7 +23,7 @@ func (r *MathBlockRenderer) writeLines(w util.BufWriter, source []byte, n gast.N
 	l := n.Lines().Len()
 	for i := 0; i < l; i++ {
 		line := n.Lines().At(i)
-		w.Write(line.Value(source))
+		w.Write(util.EscapeHTML(line.Value(source)))
 	}
 }
 

@@ -37,12 +37,12 @@ func (s *inlineMathParser) Parse(parent ast.Node, block text.Reader, pc parser.C
 		}
 		for i := 0; i < len(line); i++ {
 			c := line[i]
-			if c == '$' {
+			if c == '$' && !escapedDollar(line, i) {
 				oldi := i
 				for ; i < len(line) && line[i] == '$'; i++ {
 				}
 				closure := i - oldi
-				if closure == opener && (i+1 >= len(line) || line[i+1] != '$') {
+				if closure == opener {
 					segment := segment.WithStop(segment.Start + i - closure)
 					if !segment.IsEmpty() {
 						node.AppendChild(node, ast.NewRawTextSegment(segment))
