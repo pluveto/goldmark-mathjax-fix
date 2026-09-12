@@ -10,7 +10,7 @@ import (
 
 type InlineMathRenderer struct {
 	startDelim string
-	endDelim string
+	endDelim   string
 }
 
 func (r *InlineMathRenderer) renderInlineMath(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
@@ -20,12 +20,12 @@ func (r *InlineMathRenderer) renderInlineMath(w util.BufWriter, source []byte, n
 			segment := c.(*ast.Text).Segment
 			value := segment.Value(source)
 			if bytes.HasSuffix(value, []byte("\n")) {
-				w.Write(value[:len(value)-1])
+				w.Write(util.EscapeHTML(bytes.TrimSuffix(value[:len(value)-1], []byte("\r"))))
 				if c != n.LastChild() {
 					w.Write([]byte(" "))
 				}
 			} else {
-				w.Write(value)
+				w.Write(util.EscapeHTML(value))
 			}
 		}
 		return ast.WalkSkipChildren, nil
